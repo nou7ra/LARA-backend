@@ -124,7 +124,10 @@ const options = {
     info: {
       title: "LARA LMS API",
       version: "1.0.0",
-      description: "API documentation"
+      description: "LARA Learning Management System",
+      contact: {
+        name: "Nourhan Mohamed"  // حطي اسمك هنا
+  }
     },
     servers: [
       {
