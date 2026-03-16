@@ -126,7 +126,8 @@ const options = {
       version: "1.0.0",
       description: "LARA Learning Management System",
       contact: {
-        name: "Nourhan Mohamed"  // حطي اسمك هنا
+        name: "Nourhan Mohamed",
+        email: "nouramohamed01097690991@gmail.com"  // حطي اسمك هنا
   }
     },
     servers: [
