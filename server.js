@@ -12,6 +12,7 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Logging لكل Request
 app.use((req, res, next) => {
@@ -32,10 +33,10 @@ mongoose
   })
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-  // إعداد مكان حفظ الصور
+// إعداد مكان حفظ الصور
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');          // لازم تعملي فولدر uploads في الـ root
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -45,7 +46,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// لو عايزة تحددي أنواع الملفات (صور فقط)
 const fileFilter = (req, file, cb) => {
   if (file.mimetype.startsWith('image/')) {
     cb(null, true);
@@ -54,7 +54,7 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-const uploadCourseImage = upload.single('image');  // اسم الحقل في الـ form لازم يكون "image"
+const uploadCourseImage = upload.single('image');
 
 // Routes
 const authRouter = require("./routes/auth");
@@ -66,6 +66,9 @@ app.use("/auth", authRouter);
 app.use("/students", studentsRouter);
 app.use("/instructor", instructorRouter);
 app.use("/admin", adminRouter);
+
+// ✅ LARA Recommendation Route
+app.use("/api/recommendations", require("./routes/recommendationRoutes"));
 
 // Test Route
 app.post("/test-save", async (req, res) => {
@@ -109,12 +112,13 @@ app.post("/test-save", async (req, res) => {
 
 const sessionsRouter = require("./routes/session");
 app.use("/api/sessions", sessionsRouter);
+
 // Server Listen
 app.listen(port, () =>
   console.log(`🚀 Server running on port ${port}`)
 );
 
-
+// Swagger
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsDoc = require('swagger-jsdoc');
 
@@ -127,8 +131,8 @@ const options = {
       description: "LARA Learning Management System",
       contact: {
         name: "Nourhan Mohamed",
-        email: "nouramohamed01097690991@gmail.com"  // حطي اسمك هنا
-  }
+        email: "nouramohamed01097690991@gmail.com"
+      }
     },
     servers: [
       {
@@ -140,5 +144,4 @@ const options = {
 };
 
 const swaggerSpec = swaggerJsDoc(options);
-
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));

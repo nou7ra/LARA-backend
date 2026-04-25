@@ -18,6 +18,7 @@ const courseSchema = new mongoose.Schema(
     image: { type: String, default: "" },
     hours: { type: Number, default: 0 },
     category: { type: String, default: "General" },
+    subcategory: { type: String, default: "" }, 
     tags: { type: [String], default: [] },
 
     // ✅ الطلاب اللي عملوا Enroll في الكورس

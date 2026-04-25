@@ -73,7 +73,7 @@ router.post("/login", studentController.loginStudent);
  *       200:
  *         description: Profile updated successfully
  */
-router.put("/update-profile", authMiddleware, studentController.updateProfile);
+router.put("/update-profile", authMiddleware, studentController.uploadMiddleware, studentController.updateProfile);
 
 /**
  * @swagger
@@ -279,7 +279,7 @@ router.get("/progress", authMiddleware, studentController.getProgress);
  *         description: Enrolled successfully
  */
 router.post("/enroll", authMiddleware, authorizeRoles("student"), studentController.enrollCourse);
-
+router.get("/my-progress", authMiddleware, studentController.getMyProgress);
 /**
  * @swagger
  * /students/all:

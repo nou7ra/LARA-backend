@@ -4,6 +4,17 @@ const Course = require("../models/courseSchema");
 const Student = require("../models/studentSchema");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const path = require("path");
+
+// ✅ إعداد multer لرفع صورة الـ instructor
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => {
+    cb(null, `avatar_instructor_${Date.now()}${path.extname(file.originalname)}`);
+  },
+});
+const upload = multer({ storage });
 
 exports.registerInstructor = async (req, res) => {
   try {
@@ -41,11 +52,12 @@ exports.loginInstructor = async (req, res) => {
 exports.addFullCourse = async (req, res) => {
   try {
     const instructorId = req.user.id;
-    const { title, description, materials, exam, level, image, price, duration } = req.body;
+    const { title, description, materials, exam, level, image, price, duration, category, subcategory } = req.body;
     const newCourse = new Course({
       title, description, instructor: instructorId, materials, exam,
       level: level || "beginner", image: image || "",
       price: price !== undefined ? Number(price) : 0, duration: duration || "",
+      category: category || "", subcategory: subcategory || "",
     });
     await newCourse.save();
     await Instructor.findByIdAndUpdate(instructorId, { $push: { courses: newCourse._id } });
@@ -54,6 +66,32 @@ exports.addFullCourse = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+exports.getAllInstructors = async (req, res) => {
+  try {
+    const instructors = await Instructor.find({});
+    res.json({ instructors });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ✅ رفع صورة الـ instructor
+exports.uploadAvatar = [
+  upload.single("avatar"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const instructor = await Instructor.findById(req.user.id);
+      if (!instructor) return res.status(404).json({ message: "Instructor not found" });
+      instructor.avatar = `${process.env.BASE_URL || "http://localhost:3000"}/uploads/${req.file.filename}`;
+      await instructor.save();
+      res.json({ message: "Avatar uploaded successfully", avatar: instructor.avatar });
+    } catch (err) {
+      res.status(500).json({ message: "Server error" });
+    }
+  },
+];
 
 exports.updateCourse = async (req, res) => {
   try {
@@ -93,7 +131,7 @@ exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
     const instructor = await Instructor.findById(req.user.id);
-    res.json({ name: user.name, email: user.email, phone: instructor?.phone || "", bio: instructor?.bio || "" });
+    res.json({ name: user.name, email: user.email, phone: instructor?.phone || "", bio: instructor?.bio || "", avatar: instructor?.avatar || "" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -103,15 +141,20 @@ exports.updateProfile = async (req, res) => {
   try {
     const { name, email, phone, bio, currentPassword, newPassword } = req.body;
     const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
     if (name) user.name = name;
-    if (email) user.email = email;
+    if (email && email !== user.email) {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) return res.status(400).json({ message: "Email already in use" });
+      user.email = email;
+    }
     if (currentPassword && newPassword) {
       const isMatch = await bcrypt.compare(currentPassword, user.password);
       if (!isMatch) return res.status(400).json({ message: "Current password is incorrect" });
       user.password = await bcrypt.hash(newPassword, 10);
     }
     await user.save();
-    await Instructor.findByIdAndUpdate(req.user.id, { phone, bio });
+    await Instructor.findByIdAndUpdate(req.user.id, { name, phone, bio });
     res.json({ message: "Profile updated successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -157,36 +200,60 @@ exports.addSession = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 exports.getAnalytics = async (req, res) => {
   try {
     const courses = await Course.find({ instructor: req.user.id });
     const courseIds = courses.map(c => c._id.toString());
-    const students = await Student.find({ "completedCourses.course": { $in: courses.map(c => c._id) } });
-    const short  = courses.filter(c => (c.hours || 0) <= 5);
-    const medium = courses.filter(c => (c.hours || 0) > 5 && (c.hours || 0) <= 15);
-    const long   = courses.filter(c => (c.hours || 0) > 15);
+
+    // ✅ استخدم عدد المواد بدل hours
+    const getSize = (c) => {
+      if (c.hours && c.hours > 0) return c.hours;
+      return (c.materials || []).length; // عدد الفيديوهات/PDFs
+    };
+
+    const short  = courses.filter(c => getSize(c) <= 3);
+    const medium = courses.filter(c => getSize(c) > 3 && getSize(c) <= 7);
+    const long   = courses.filter(c => getSize(c) > 7);
+
+    // ✅ احسب الـ dropout من enrolledStudents مباشرة
     const calcDropout = (courseGroup) => {
       if (courseGroup.length === 0) return 0;
-      const groupIds = courseGroup.map(c => c._id.toString());
-      const enrolled  = students.filter(s => s.completedCourses.some(cc => groupIds.includes(cc.course?.toString()))).length;
-      const completed = students.filter(s => s.completedCourses.some(cc => groupIds.includes(cc.course?.toString()) && (cc.status === "completed" || cc.status === "passed" || (cc.score && cc.score >= 50)))).length;
+      let enrolled = 0, completed = 0;
+      courseGroup.forEach(c => {
+        const list = c.enrolledStudents || [];
+        enrolled += list.length;
+        completed += list.filter(e => e.progress === 100).length;
+      });
       if (enrolled === 0) return 0;
       return Math.round(((enrolled - completed) / enrolled) * 100);
     };
+
     const dropoutData = [
       { duration: "Short",  rate: calcDropout(short) },
       { duration: "Medium", rate: calcDropout(medium) },
       { duration: "Long",   rate: calcDropout(long) },
     ];
-    let repeatedCount = 0, totalCount = 0;
-    students.forEach(student => {
-      const relatedCourses = student.completedCourses.filter(cc => courseIds.includes(cc.course?.toString()));
-      if (relatedCourses.length === 0) return;
-      totalCount++;
-      const courseIdList = relatedCourses.map(cc => cc.course?.toString());
-      if (courseIdList.length > new Set(courseIdList).size) repeatedCount++;
+
+    // ✅ Repeated courses
+    const studentMap = new Map();
+    courses.forEach(c => {
+      (c.enrolledStudents || []).forEach(e => {
+        const id = e.student?.toString();
+        if (!id) return;
+        if (!studentMap.has(id)) studentMap.set(id, new Set());
+        studentMap.get(id).add(c._id.toString());
+      });
     });
+
+    let repeatedCount = 0, totalCount = 0;
+    studentMap.forEach((courseSet) => {
+      totalCount++;
+      if (courseSet.size > 1) repeatedCount++;
+    });
+
     const repeatedPct = totalCount > 0 ? Math.round((repeatedCount / totalCount) * 100) : 0;
+
     res.json({
       dropoutData,
       repeatData: [
@@ -227,38 +294,111 @@ exports.deleteCourse = async (req, res) => {
   }
 };
 
+
+// ✅ Recent Activity - أحدث نشاط للطلاب في كورسات الإنستراكتور
+exports.getRecentActivity = async (req, res) => {
+  try {
+    const courses = await Course.find({ instructor: req.user.id })
+      .populate("enrolledStudents.student", "name")
+      .lean();
+
+    const activities = [];
+
+    courses.forEach(course => {
+      // ✅ الطلاب المسجلين
+      (course.enrolledStudents || []).forEach(e => {
+        const studentName = e.student?.name || "A student";
+        activities.push({
+          type: "enroll",
+          message: `${studentName} enrolled in ${course.title}`,
+          date: e.enrolledAt || course.createdAt,
+        });
+
+        // ✅ لو الطالب خلص الكورس
+        if (e.progress === 100) {
+          activities.push({
+            type: "complete",
+            message: `${studentName} completed ${course.title}`,
+            date: e.enrolledAt || course.createdAt,
+          });
+        }
+      });
+
+      // ✅ Reviews
+      (course.reviews || []).forEach(r => {
+        activities.push({
+          type: "review",
+          message: `A student left a ${r.rating} star review on ${course.title}`,
+          date: r.date || course.createdAt,
+        });
+      });
+    });
+
+    // ✅ رتب من الأحدث للأقدم
+    activities.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    res.json({ activities: activities.slice(0, 20) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ✅ Student Feedback - reviews الطلاب على كورسات الإنستراكتور
+exports.getStudentFeedback = async (req, res) => {
+  try {
+    const courses = await Course.find({ instructor: req.user.id })
+      .populate("reviews.userId", "name avatar")
+      .lean();
+
+    const feedback = [];
+
+    courses.forEach(course => {
+      (course.reviews || []).forEach(r => {
+        feedback.push({
+          studentName: r.userId?.name || "Anonymous",
+          avatar: r.userId?.avatar || "",
+          courseName: course.title,
+          rating: r.rating,
+          comment: r.comment,
+          date: r.date,
+        });
+      });
+    });
+
+    feedback.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    res.json({ feedback: feedback.slice(0, 10) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
 exports.getMyStudents = async (req, res) => {
   try {
     const courses = await Course.find({ instructor: req.user.id }).lean();
-
-    // ✅ DEBUG
     console.log("enrolledStudents:", JSON.stringify(courses.map(c => ({
       title: c.title,
       enrolledStudents: c.enrolledStudents
     })), null, 2));
-
     const courseMap = {};
     courses.forEach(c => { courseMap[c._id.toString()] = c.title; });
     const courseIds = courses.map(c => c._id);
     const allStudents = new Map();
-
     courses.forEach(course => {
-  (course.enrolledStudents || []).forEach(e => {
-    const studentId = e.student ? e.student.toString() : e.toString();
-    const progress  = e.progress || 0;
-    
-    // ✅ لو موجود خد الأعلى progress
-    if (!allStudents.has(studentId)) {
-      allStudents.set(studentId, { progress, courseName: courseMap[course._id.toString()] });
-    } else {
-      const existing = allStudents.get(studentId);
-      if (progress > existing.progress) {
-        allStudents.set(studentId, { progress, courseName: courseMap[course._id.toString()] });
-      }
-    }
-  });
-});
-
+      (course.enrolledStudents || []).forEach(e => {
+        const studentId = e.student ? e.student.toString() : e.toString();
+        const progress  = e.progress || 0;
+        if (!allStudents.has(studentId)) {
+          allStudents.set(studentId, { progress, courseName: courseMap[course._id.toString()] });
+        } else {
+          const existing = allStudents.get(studentId);
+          if (progress > existing.progress) {
+            allStudents.set(studentId, { progress, courseName: courseMap[course._id.toString()] });
+          }
+        }
+      });
+    });
     const oldStudents = await Student.find({ "completedCourses.course": { $in: courseIds } });
     oldStudents.forEach(s => {
       const userId = s.userId?.toString();
@@ -271,11 +411,8 @@ exports.getMyStudents = async (req, res) => {
         });
       }
     });
-
     if (allStudents.size === 0) return res.json({ students: [] });
-
     const users = await User.find({ _id: { $in: [...allStudents.keys()] }, role: "student" });
-
     const result = users.map(u => {
       const data = allStudents.get(u._id.toString()) || {};
       return {
@@ -287,9 +424,9 @@ exports.getMyStudents = async (req, res) => {
         lastActivity: "—",
       };
     });
-
     res.json({ students: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+

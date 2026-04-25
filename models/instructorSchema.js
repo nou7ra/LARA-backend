@@ -7,6 +7,7 @@ const instructorSchema = new mongoose.Schema(
     password: { type: String, required: true }, // ممكن تشفيره بعدين زي الUsers
     role: { type: String, default: "instructor" },
     courses: [{ type: mongoose.Schema.Types.ObjectId, ref: "Course" }],
+    avatar: { type: String, default: null }
   },
   { timestamps: true }
 );

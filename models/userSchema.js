@@ -18,6 +18,9 @@ const userSchema = new mongoose.Schema(
     // كلمة السر
     password: { type: String, required: true },
 
+    // رقم التليفون ← ✅ أضفناه هنا
+    phone: { type: String, default: "" },
+
     // دور المستخدم
     role: {
       type: String,
@@ -38,18 +41,14 @@ const userSchema = new mongoose.Schema(
 // =======================================================
 userSchema.pre("save", async function () {
   try {
-    // لو الباسورد متبدلش أو مفيش تغيير، اخرج فوراً
     if (!this.isModified("password")) return;
-
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
-    
-    // مش محتاجين next() هنا طالما الدالة async
   } catch (err) {
-    // لو حصل خطأ ارميه وهيوصل للـ Controller
     throw new Error(err);
   }
 });
+
 // =======================================================
 // Method: مقارنة الباسورد
 // =======================================================
@@ -65,5 +64,4 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 // =======================================================
 // Export الموديل
 // =======================================================
-module.exports = mongoose.model("User", userSchema, "users"); 
-// الكوليكشن النهائية هي "users"
+module.exports = mongoose.model("User", userSchema, "users");
