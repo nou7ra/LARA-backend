@@ -189,7 +189,7 @@ exports.getDropoutRateByLevel = async (req, res) => {
       (course.enrolledStudents || []).forEach(e => {
         levelMap[level].total++;
         const progress = e.progress || 0;
-        if (progress < 20) levelMap[level].dropped++;
+        if (progress < 100) levelMap[level].dropped++;
       });
     });
 
@@ -226,7 +226,7 @@ exports.getDropoutComparison = async (req, res) => {
         const e = c.enrolledStudents?.find(e => (e.student?.toString() || e.toString()) === id);
         if (e && (e.progress || 0) > maxProgress) maxProgress = e.progress || 0;
       });
-      return maxProgress < 20;
+      return maxProgress < 100;
     }).length;
 
     const multiDropped = multiIds.filter(id => {
@@ -235,7 +235,7 @@ exports.getDropoutComparison = async (req, res) => {
         const e = c.enrolledStudents?.find(e => (e.student?.toString() || e.toString()) === id);
         if (e && (e.progress || 0) > maxProgress) maxProgress = e.progress || 0;
       });
-      return maxProgress < 20;
+      return maxProgress < 100;
     }).length;
 
     res.json([

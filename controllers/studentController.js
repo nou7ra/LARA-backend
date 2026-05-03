@@ -106,16 +106,12 @@ exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const { name, email, interests, skills, previousCourses } = req.body;
-
     await User.findByIdAndUpdate(userId, { name, email });
-
     const updateData = { full_name: name, email, interests, skills, previousCourses };
     if (req.file) {
       updateData.avatar = `${req.protocol}://${req.get("host")}/uploads/avatars/${req.file.filename}`;
     }
-
     const student = await Student.findOneAndUpdate({ userId }, updateData, { new: true });
-
     res.json({ message: "Updated", student, avatar: student.avatar || "" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -150,13 +146,9 @@ exports.submitExam = async (req, res) => {
     const totalQuestions = questions.length;
     const finalGrade = totalQuestions > 0 ? (score / totalQuestions) * 100 : 0;
     const isPassed = finalGrade >= 50;
-
-    // ✅ حفظ النتيجة دايماً سواء pass أو fail
-    // ✅ تحديث الـ level بناءً على الدرجة
     const newLevel = finalGrade >= 80 ? "Advanced"
       : finalGrade >= 60 ? "Intermediate"
       : "Beginner";
-
     await Student.findOneAndUpdate(
       { userId },
       {
@@ -170,15 +162,12 @@ exports.submitExam = async (req, res) => {
         $set: { level: newLevel }
       }
     );
-
-    // ✅ حفظ اسم الكورس في الـ history لو pass
     if (isPassed) {
       await Student.findOneAndUpdate(
         { userId },
         { $push: { previousCourses: course.title } }
       );
     }
-
     res.status(200).json({ message: "Exam submitted successfully", score, totalQuestions, grade: `${finalGrade}%`, passed: isPassed });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -219,7 +208,7 @@ exports.getStudentProfile = async (req, res) => {
         interests: student.interests,
         skills: student.skills,
         history: student.previousCourses,
-        level: student.level || "Beginner", // ✅ أضفنا الـ level
+        level: student.level || "Beginner",
         achievements: student.completedCourses
       }
     });
@@ -256,20 +245,52 @@ exports.enrollCourse = async (req, res) => {
   }
 };
 
+// ✅ التعديل الأول - saveProgress
 exports.saveProgress = async (req, res) => {
   try {
     const { courseId, progress } = req.body;
     const userId = req.user.id;
+
+    // 1. حفظ في course.enrolledStudents
     const course = await Course.findById(courseId);
     if (!course) return res.status(404).json({ error: "Course not found" });
-    const enrollment = course.enrolledStudents.find(e => e.student?.toString() === userId);
+
+    const enrollment = course.enrolledStudents.find(
+      e => e.student?.toString() === userId
+    );
     if (enrollment) {
-      enrollment.progress = progress;
+      // ✅ حفظ الأعلى بس مش تنزل
+      if (progress > enrollment.progress) {
+        enrollment.progress = progress;
+      }
     } else {
       course.enrolledStudents.push({ student: userId, progress });
     }
     await course.save();
-    res.json({ message: "Progress saved" });
+
+    // 2. حفظ في student.courseProgress كمان
+    const student = await Student.findOne({ userId });
+    if (student) {
+      const existingProgress = student.courseProgress.find(
+        p => p.courseId?.toString() === courseId
+      );
+      if (existingProgress) {
+        // ✅ حفظ الأعلى بس مش تنزل
+        if (progress > existingProgress.percentage) {
+          existingProgress.percentage = progress;
+          existingProgress.lastUpdated = new Date();
+        }
+      } else {
+        student.courseProgress.push({
+          courseId,
+          percentage: progress,
+          lastUpdated: new Date(),
+        });
+      }
+      await student.save();
+    }
+
+    res.json({ message: "Progress saved", progress });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -307,6 +328,7 @@ exports.submitReview = async (req, res) => {
   }
 };
 
+// ✅ التعديل الثاني - getMyProgress
 exports.getMyProgress = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -317,12 +339,23 @@ exports.getMyProgress = async (req, res) => {
       const enrollment = course.enrolledStudents.find(
         e => e.student?.toString() === userId
       );
+
+      // ✅ جيب من الاتنين وخد الأعلى
+      const courseProgressEntry = student?.courseProgress?.find(
+        p => p.courseId?.toString() === course._id.toString()
+      );
+
+      const progressFromCourse = enrollment?.progress || 0;
+      const progressFromStudent = courseProgressEntry?.percentage || 0;
+      const finalProgress = Math.max(progressFromCourse, progressFromStudent);
+
       const quizResult = student?.completedCourses?.find(
         cc => cc.course?.toString() === course._id.toString()
       );
+
       return {
         courseId: course._id,
-        progress: enrollment?.progress || 0,
+        progress: finalProgress,
         quizScore: quizResult ? quizResult.score : null,
         quizStatus: quizResult ? quizResult.status : null,
       };
@@ -337,10 +370,6 @@ exports.getMyProgress = async (req, res) => {
 exports.getMyStudents = async (req, res) => {
   try {
     const courses = await Course.find({ instructor: req.user.id }).lean();
-    console.log("courses enrolledStudents:", JSON.stringify(courses.map(c => ({
-      title: c.title,
-      enrolledStudents: c.enrolledStudents
-    })), null, 2));
     const courseMap = {};
     courses.forEach(c => { courseMap[c._id.toString()] = c.title; });
     const courseIds = courses.map(c => c._id);
